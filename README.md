@@ -6,7 +6,8 @@ Crie um arquivo .env e cole essas linhas
 - HF_TOKEN=HF_TOKEN
 - OPENAI_KEY=OPENAI_KEY
 
-
+ **Comandos :**
+ 
 - `!chat [mensagem]` - Conversa com o bot
 
 - `!ativar_canal` - Ativa o bot para responder mensagens neste canal
