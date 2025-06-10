@@ -2,9 +2,9 @@
 
 Crie um arquivo .env e cole essas linhas
 
-DISCORD_TOKEN= DISCORD_TOKEN
-HF_TOKEN=HF_TOKEN
-OPENAI_KEY=OPENAI_KEY
+- DISCORD_TOKEN= DISCORD_TOKEN
+- HF_TOKEN=HF_TOKEN
+- OPENAI_KEY=OPENAI_KEY
 
 
 - `!chat [mensagem]` - Conversa com o bot
