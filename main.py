@@ -9,6 +9,8 @@ import asyncio
 import json
 import random
 from dotenv import load_dotenv
+import wavelink
+from wavelink import spotify
 
 # Carrega variáveis de ambiente
 load_dotenv()
@@ -17,13 +19,44 @@ load_dotenv()
 intents = discord.Intents.all()
 intents.message_content = True
 
+# Classe para gerenciar música
+class MusicPlayer:
+    def __init__(self):
+        self.queue = {}  # {guild_id: [tracks]}
+        
+    def get_queue(self, guild_id):
+        if guild_id not in self.queue:
+            self.queue[guild_id] = []
+        return self.queue[guild_id]
+    
+    def add_to_queue(self, guild_id, track):
+        if guild_id not in self.queue:
+            self.queue[guild_id] = []
+        self.queue[guild_id].append(track)
+    
+    def clear_queue(self, guild_id):
+        self.queue[guild_id] = []
+    
+    def remove_from_queue(self, guild_id, index):
+        if guild_id in self.queue and 0 <= index < len(self.queue[guild_id]):
+            return self.queue[guild_id].pop(index)
+        return None
+
 # Configuração do bot
 class Bot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
+        self.music = MusicPlayer()
         
     async def setup_hook(self):
         await self.tree.sync()
+        # Inicializa o node do Wavelink
+        node: wavelink.Node = wavelink.Node(
+            uri='http://localhost:2333',
+            password='youshallnotpass'
+        )
+        await wavelink.NodePool.connect(client=self, nodes=[node])
+        print("Wavelink está pronto!")
 
 bot = Bot()
 
@@ -171,10 +204,19 @@ async def ajuda(ctx):
 `!trocar_ia [huggingface|openai|ollama]` - Muda o provedor de IA
 `!limpar_chat [quantidade]` - Limpa o chat com a quantidade de mensagens especificada
 `!limpar_chat_todos` - Limpa o chat com todas as mensagens
+`!avatar [membro]` - Exibe o avatar de um membro
+
+**Comandos de Música:**
+`!pmusic [link/nome]` - Toca uma música do YouTube ou Spotify
+`!skip` - Pula para a próxima música
+`!queue` - Mostra a fila de músicas
+`!stop` - Para a música e limpa a fila
+`!pause` - Pausa ou despausa a música atual
 
 **Exemplo de uso:**
 `!chat Olá, como vai você?`
 `!criar_canal "Geral" "bate-papo"`
+`!pmusic https://www.youtube.com/watch?v=dQw4w9WgXcQ`
 """
     embed = discord.Embed(
         title="Ajuda do Bot",
@@ -343,6 +385,135 @@ async def limpar_chat_todos(ctx):
     
     # Envia nova mensagem informando que terminou (que não será deletada)
     await ctx.send("✅ Chat limpo com sucesso! Todas as mensagens foram removidas.", delete_after=5)
+
+
+@bot.command(name="avatar")
+async def avatar(ctx, member: discord.Member = None):
+    if member is None:
+        member = ctx.author
+
+    avatar_url = member.avatar.url
+    await ctx.send(f"Avatar de {member.name}: {avatar_url}")
+
+@bot.command(name="pmusic")
+async def play_music(ctx, *, query: str):
+    """Toca uma música do YouTube ou Spotify"""
+    
+    # Verifica se o usuário está em um canal de voz
+    if not ctx.author.voice:
+        await ctx.reply("❌ Você precisa estar em um canal de voz!")
+        return
+        
+    # Conecta ao canal de voz se ainda não estiver conectado
+    if not ctx.voice_client:
+        await ctx.author.voice.channel.connect(cls=wavelink.Player)
+    
+    # Busca a música
+    player: wavelink.Player = ctx.voice_client
+    
+    try:
+        # Tenta buscar como URL do Spotify
+        if "spotify.com" in query:
+            decoded = await spotify.SpotifyTrack.search(query=query)
+            if not decoded:
+                await ctx.reply("❌ Não foi possível encontrar essa música no Spotify!")
+                return
+            track = decoded[0]
+        else:
+            # Busca no YouTube
+            track = await wavelink.YouTubeTrack.search(query=query, return_first=True)
+            if not track:
+                await ctx.reply("❌ Não foi possível encontrar essa música!")
+                return
+        
+        # Adiciona à fila
+        bot.music.add_to_queue(ctx.guild.id, track)
+        
+        # Se não estiver tocando, começa a tocar
+        if not player.is_playing():
+            await player.play(track)
+            await ctx.reply(f"🎵 Tocando agora: **{track.title}**")
+        else:
+            await ctx.reply(f"🎵 Adicionado à fila: **{track.title}**")
+            
+    except Exception as e:
+        await ctx.reply(f"❌ Erro ao tocar música: {str(e)}")
+
+@bot.command(name="skip")
+async def skip_music(ctx):
+    """Pula para a próxima música na fila"""
+    if not ctx.voice_client or not ctx.voice_client.is_playing():
+        await ctx.reply("❌ Não há música tocando!")
+        return
+        
+    player: wavelink.Player = ctx.voice_client
+    queue = bot.music.get_queue(ctx.guild.id)
+    
+    if not queue:
+        await player.stop()
+        await ctx.reply("⏭️ Música pulada! A fila está vazia.")
+    else:
+        next_track = queue.pop(0)
+        await player.play(next_track)
+        await ctx.reply(f"⏭️ Pulando para: **{next_track.title}**")
+
+@bot.command(name="queue")
+async def show_queue(ctx):
+    """Mostra a fila de músicas"""
+    queue = bot.music.get_queue(ctx.guild.id)
+    
+    if not queue:
+        await ctx.reply("📝 A fila está vazia!")
+        return
+        
+    queue_text = "📝 **Fila de Músicas:**\n"
+    for i, track in enumerate(queue, 1):
+        queue_text += f"{i}. {track.title}\n"
+        
+    await ctx.reply(queue_text)
+
+@bot.command(name="stop")
+async def stop_music(ctx):
+    """Para a música e limpa a fila"""
+    if not ctx.voice_client:
+        await ctx.reply("❌ Não estou em um canal de voz!")
+        return
+        
+    player: wavelink.Player = ctx.voice_client
+    bot.music.clear_queue(ctx.guild.id)
+    await player.stop()
+    await player.disconnect()
+    await ctx.reply("⏹️ Música parada e fila limpa!")
+
+@bot.command(name="pause")
+async def pause_music(ctx):
+    """Pausa ou despausa a música atual"""
+    if not ctx.voice_client or not ctx.voice_client.is_playing():
+        await ctx.reply("❌ Não há música tocando!")
+        return
+        
+    player: wavelink.Player = ctx.voice_client
+    
+    if player.is_paused():
+        await player.resume()
+        await ctx.reply("▶️ Música despausada!")
+    else:
+        await player.pause()
+        await ctx.reply("⏸️ Música pausada!")
+
+@bot.event
+async def on_wavelink_track_end(player: wavelink.Player, track: wavelink.Track, reason):
+    """Evento chamado quando uma música termina"""
+    if not player.guild:
+        return
+        
+    queue = bot.music.get_queue(player.guild.id)
+    
+    if queue:
+        next_track = queue.pop(0)
+        await player.play(next_track)
+    else:
+        await player.disconnect()
 
 # Inicia o bot
 bot.run(os.getenv('DISCORD_TOKEN'))
