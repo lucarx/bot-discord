@@ -24,11 +24,11 @@
  **Comandos de Música:**
  
 - `!pmusic [link/nome]` - Toca uma música do YouTube ou Spotify
-- 
+  
 - `!skip` - Pula para a próxima música
-- 
+ 
 - `!queue` - Mostra a fila de músicas
-- 
+ 
 - `!stop` - Para a música e limpa a fila
-- 
+ 
 - `!pause` - Pausa ou despausa a música atual
